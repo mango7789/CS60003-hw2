@@ -43,7 +43,6 @@ class StanfordBackgroundDataset(Dataset):
         self.lbl_dir = self.data_root / "labels"
 
         self.img_transform = T.Compose([
-            T.Resize(input_size),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406],
                         std=[0.229, 0.224, 0.225]),
@@ -95,7 +94,8 @@ class StanfordBackgroundDataset(Dataset):
         image = Image.open(self.img_dir / f"{stem}.jpg").convert("RGB")
         label = self._load_label(stem)
 
-        # Resize label to input_size using nearest-neighbour (preserve class ids)
+        # Resize both image and label to input_size first
+        image = image.resize((self.input_size[1], self.input_size[0]), Image.BILINEAR)
         label_img = Image.fromarray(label.astype(np.uint8))
         label_img = label_img.resize(
             (self.input_size[1], self.input_size[0]), Image.NEAREST
@@ -104,10 +104,6 @@ class StanfordBackgroundDataset(Dataset):
 
         if self.augment:
             image, label = self._augment(image, label)
-        else:
-            image = image.resize(
-                (self.input_size[1], self.input_size[0]), Image.BILINEAR
-            )
 
         image_tensor = self.img_transform(image)
         label_tensor = torch.from_numpy(label).long()

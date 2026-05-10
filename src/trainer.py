@@ -8,7 +8,6 @@ Logs per-epoch:
     - val/iou_class_{name}
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -17,6 +16,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from .config import Config
 from .metrics import SegmentationMetrics
@@ -102,7 +102,8 @@ class Trainer:
         self.model.train()
         total_loss = 0.0
 
-        for images, labels in self.train_loader:
+        pbar = tqdm(self.train_loader, desc=f"  train", leave=False, unit="batch")
+        for images, labels in pbar:
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
 
@@ -113,6 +114,7 @@ class Trainer:
             self.optimizer.step()
 
             total_loss += loss.item()
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         return total_loss / len(self.train_loader)
 
@@ -122,7 +124,8 @@ class Trainer:
         self.metrics.reset()
         total_loss = 0.0
 
-        for images, labels in self.val_loader:
+        pbar = tqdm(self.val_loader, desc=f"  val  ", leave=False, unit="batch")
+        for images, labels in pbar:
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
 
@@ -132,6 +135,7 @@ class Trainer:
 
             preds = logits.argmax(dim=1)
             self.metrics.update(preds, labels)
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         results = self.metrics.compute()
         results["loss"] = total_loss / len(self.val_loader)
@@ -168,7 +172,8 @@ class Trainer:
         print(f"Epochs     : {cfg.num_epochs}  |  LR: {cfg.learning_rate}  |  BS: {cfg.batch_size}")
         print(f"{'='*60}\n")
 
-        for epoch in range(1, cfg.num_epochs + 1):
+        epoch_bar = tqdm(range(1, cfg.num_epochs + 1), desc=cfg.experiment_name, unit="epoch")
+        for epoch in epoch_bar:
             t0 = time.time()
 
             train_loss  = self._train_epoch(epoch)
@@ -180,13 +185,12 @@ class Trainer:
             self._log(train_loss, val_results, epoch)
 
             elapsed = time.time() - t0
-            print(
-                f"Epoch [{epoch:3d}/{cfg.num_epochs}]  "
-                f"train_loss={train_loss:.4f}  "
-                f"val_loss={val_results['loss']:.4f}  "
-                f"pixel_acc={val_results['pixel_acc']:.4f}  "
-                f"mIoU={val_results['miou']:.4f}  "
-                f"({elapsed:.1f}s)"
+            epoch_bar.set_postfix(
+                tr_loss=f"{train_loss:.4f}",
+                val_loss=f"{val_results['loss']:.4f}",
+                acc=f"{val_results['pixel_acc']:.4f}",
+                mIoU=f"{val_results['miou']:.4f}",
+                t=f"{elapsed:.1f}s",
             )
 
             # Save best model

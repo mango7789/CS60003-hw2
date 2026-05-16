@@ -125,14 +125,15 @@ def _collect_stems(data_root: str) -> List[str]:
 
 
 def _stratified_split(
-    stems: List[str], data_root: str, val_split: float, seed: int
-) -> Tuple[List[str], List[str]]:
+    stems: List[str], data_root: str, val_split: float, seed: int, num_classes: int = 8
+) -> Tuple[List[str], List[str], np.ndarray]:
     """
     Split stems so that images containing rare classes are distributed
     proportionally between train and val.
 
-    Rare classes (water=4, mountain=6, foreground=7) are used as strata;
-    images with none of these fall into a common stratum.
+    Returns (train_stems, val_stems, train_class_counts) where
+    train_class_counts[c] is the total pixel count for class c in the
+    training split — used to compute inverse-frequency weights for Dice loss.
     """
     from collections import defaultdict
 
@@ -140,13 +141,21 @@ def _stratified_split(
     rare = {4, 6, 7}
 
     groups: dict = defaultdict(list)
+    pixel_counts: dict = {}  # stem -> (H*W array of class counts)
+
     for stem in stems:
         label_path = lbl_dir / f"{stem}.regions.txt"
-        classes: set = set()
+        rows = []
         with open(label_path) as f:
             for line in f:
-                for v in line.split():
-                    classes.add(int(v))
+                line = line.strip()
+                if line:
+                    rows.append([int(v) for v in line.split()])
+        arr = np.array(rows, dtype=np.int64)
+        counts = np.bincount(arr.flatten(), minlength=num_classes)[:num_classes]
+        pixel_counts[stem] = counts
+
+        classes = set(np.unique(arr).tolist())
         rare_present = sorted(classes & rare)
         stratum = rare_present[0] if rare_present else -1
         groups[stratum].append(stem)
@@ -160,7 +169,8 @@ def _stratified_split(
         val_stems.extend(group[:n_val])
         train_stems.extend(group[n_val:])
 
-    return train_stems, val_stems
+    train_class_counts = sum(pixel_counts[s] for s in train_stems)
+    return train_stems, val_stems, train_class_counts
 
 
 def get_dataloaders(cfg: Config) -> Tuple[DataLoader, DataLoader]:
@@ -172,8 +182,8 @@ def get_dataloaders(cfg: Config) -> Tuple[DataLoader, DataLoader]:
             "Make sure images/ and labels/ sub-directories exist."
         )
 
-    train_stems, val_stems = _stratified_split(
-        stems, cfg.data_root, cfg.val_split, cfg.random_seed
+    train_stems, val_stems, train_class_counts = _stratified_split(
+        stems, cfg.data_root, cfg.val_split, cfg.random_seed, cfg.num_classes
     )
 
     train_ds = StanfordBackgroundDataset(
@@ -197,4 +207,4 @@ def get_dataloaders(cfg: Config) -> Tuple[DataLoader, DataLoader]:
     )
 
     print(f"Dataset: {len(train_ds)} train / {len(val_ds)} val samples")
-    return train_loader, val_loader
+    return train_loader, val_loader, train_class_counts

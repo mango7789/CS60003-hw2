@@ -41,15 +41,25 @@ class DiceLoss(nn.Module):
 
     For each class c:
         Dice_c = (2 * sum(p_c * y_c) + smooth) / (sum(p_c) + sum(y_c) + smooth)
-    Final loss = 1 - mean(Dice_c over all classes)
+    Final loss = 1 - weighted_mean(Dice_c over present classes)
 
     Softmax is applied internally; logits are expected as input.
+    Pass class_weights (C,) to up-weight rare classes (inverse-frequency weighting).
     """
 
-    def __init__(self, smooth: float = 1.0, ignore_index: int = 255):
+    def __init__(
+        self,
+        smooth: float = 1.0,
+        ignore_index: int = 255,
+        class_weights: torch.Tensor = None,
+    ):
         super().__init__()
         self.smooth = smooth
         self.ignore_index = ignore_index
+        self.register_buffer(
+            "class_weights",
+            class_weights if class_weights is not None else None,
+        )
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -84,8 +94,16 @@ class DiceLoss(nn.Module):
         dice_per_class = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
 
         # Only average over classes that actually appear in this batch.
-        present   = targets_flat.sum(dim=1) > 0
-        dice_loss = 1.0 - (dice_per_class[present].mean() if present.any() else dice_per_class.mean())
+        present = targets_flat.sum(dim=1) > 0
+        if present.any():
+            d = dice_per_class[present]
+            if self.class_weights is not None:
+                w = self.class_weights[present]
+                dice_loss = 1.0 - (d * w).sum() / w.sum()
+            else:
+                dice_loss = 1.0 - d.mean()
+        else:
+            dice_loss = 1.0 - dice_per_class.mean()
 
         return dice_loss
 
@@ -98,13 +116,20 @@ class CombinedLoss(nn.Module):
 
     Args:
         dice_weight: weight of the Dice term (0 → pure CE, 1 → pure Dice)
+        class_weights: per-class weights for the Dice term (inverse-frequency)
     """
 
-    def __init__(self, dice_weight: float = 0.5, smooth: float = 1.0, ignore_index: int = 255):
+    def __init__(
+        self,
+        dice_weight: float = 0.5,
+        smooth: float = 1.0,
+        ignore_index: int = 255,
+        class_weights: torch.Tensor = None,
+    ):
         super().__init__()
         self.dice_weight = dice_weight
-        self.ce_loss  = CrossEntropyLoss(ignore_index=ignore_index)
-        self.dice_loss = DiceLoss(smooth=smooth, ignore_index=ignore_index)
+        self.ce_loss   = CrossEntropyLoss(ignore_index=ignore_index)
+        self.dice_loss = DiceLoss(smooth=smooth, ignore_index=ignore_index, class_weights=class_weights)
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         ce   = self.ce_loss(logits, targets)
@@ -114,13 +139,28 @@ class CombinedLoss(nn.Module):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-def get_loss_fn(cfg: Config) -> nn.Module:
-    """Instantiate the loss function specified in cfg.loss_type."""
+def get_loss_fn(cfg: Config, class_counts=None) -> nn.Module:
+    """
+    Instantiate the loss function specified in cfg.loss_type.
+
+    Args:
+        class_counts: optional array/tensor of per-class pixel counts from the
+                      training split (returned by get_dataloaders). When provided,
+                      inverse-frequency weights are computed and passed to DiceLoss.
+    """
+    weights = None
+    if class_counts is not None:
+        import numpy as np
+        counts = np.asarray(class_counts, dtype=np.float64)
+        counts = np.where(counts == 0, 1.0, counts)   # avoid div-by-zero for absent classes
+        inv_freq = 1.0 / counts
+        weights = torch.tensor(inv_freq / inv_freq.sum(), dtype=torch.float32)
+
     if cfg.loss_type == "ce":
         return CrossEntropyLoss()
     elif cfg.loss_type == "dice":
-        return DiceLoss(smooth=cfg.dice_smooth)
+        return DiceLoss(smooth=cfg.dice_smooth, class_weights=weights)
     elif cfg.loss_type == "combined":
-        return CombinedLoss(dice_weight=cfg.dice_weight, smooth=cfg.dice_smooth)
+        return CombinedLoss(dice_weight=cfg.dice_weight, smooth=cfg.dice_smooth, class_weights=weights)
     else:
         raise ValueError(f"Unknown loss_type: {cfg.loss_type!r}. Choose 'ce', 'dice', or 'combined'.")

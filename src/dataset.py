@@ -73,7 +73,7 @@ class StanfordBackgroundDataset(Dataset):
         # Random crop (pad then crop to input_size)
         pad = 20
         image = TF.pad(image, pad)
-        label_img = TF.pad(label_img, pad, fill=0)
+        label_img = TF.pad(label_img, pad, fill=255)
         i, j, h, w = T.RandomCrop.get_params(
             image, output_size=self.input_size
         )
@@ -124,6 +124,45 @@ def _collect_stems(data_root: str) -> List[str]:
     return stems
 
 
+def _stratified_split(
+    stems: List[str], data_root: str, val_split: float, seed: int
+) -> Tuple[List[str], List[str]]:
+    """
+    Split stems so that images containing rare classes are distributed
+    proportionally between train and val.
+
+    Rare classes (water=4, mountain=6, foreground=7) are used as strata;
+    images with none of these fall into a common stratum.
+    """
+    from collections import defaultdict
+
+    lbl_dir = Path(data_root) / "labels"
+    rare = {4, 6, 7}
+
+    groups: dict = defaultdict(list)
+    for stem in stems:
+        label_path = lbl_dir / f"{stem}.regions.txt"
+        classes: set = set()
+        with open(label_path) as f:
+            for line in f:
+                for v in line.split():
+                    classes.add(int(v))
+        rare_present = sorted(classes & rare)
+        stratum = rare_present[0] if rare_present else -1
+        groups[stratum].append(stem)
+
+    rng = random.Random(seed)
+    train_stems: List[str] = []
+    val_stems: List[str] = []
+    for group in groups.values():
+        rng.shuffle(group)
+        n_val = max(1, int(len(group) * val_split))
+        val_stems.extend(group[:n_val])
+        train_stems.extend(group[n_val:])
+
+    return train_stems, val_stems
+
+
 def get_dataloaders(cfg: Config) -> Tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders from a Config."""
     stems = _collect_stems(cfg.data_root)
@@ -133,12 +172,9 @@ def get_dataloaders(cfg: Config) -> Tuple[DataLoader, DataLoader]:
             "Make sure images/ and labels/ sub-directories exist."
         )
 
-    random.seed(cfg.random_seed)
-    random.shuffle(stems)
-
-    n_val = max(1, int(len(stems) * cfg.val_split))
-    val_stems = stems[:n_val]
-    train_stems = stems[n_val:]
+    train_stems, val_stems = _stratified_split(
+        stems, cfg.data_root, cfg.val_split, cfg.random_seed
+    )
 
     train_ds = StanfordBackgroundDataset(
         cfg.data_root, train_stems,

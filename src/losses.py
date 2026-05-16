@@ -72,15 +72,20 @@ class DiceLoss(nn.Module):
         probs = probs * mask
         targets_one_hot = targets_one_hot * mask
 
-        # Flatten spatial dims: (B, C, H*W)
-        probs_flat = probs.view(probs.shape[0], num_classes, -1)
-        targets_flat = targets_one_hot.view(targets_one_hot.shape[0], num_classes, -1)
+        # Flatten to (C, B*H*W) so Dice is computed per class across the whole batch.
+        # Per-image-per-class averaging gives absent classes a free Dice=1 (smooth/smooth),
+        # which kills gradients for rare classes.
+        probs_flat   = probs.permute(1, 0, 2, 3).reshape(num_classes, -1)           # (C, N)
+        targets_flat = targets_one_hot.permute(1, 0, 2, 3).reshape(num_classes, -1) # (C, N)
 
-        intersection = (probs_flat * targets_flat).sum(dim=2)          # (B, C)
-        cardinality  = probs_flat.sum(dim=2) + targets_flat.sum(dim=2) # (B, C)
+        intersection   = (probs_flat * targets_flat).sum(dim=1)                      # (C,)
+        cardinality    = probs_flat.sum(dim=1) + targets_flat.sum(dim=1)             # (C,)
 
         dice_per_class = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
-        dice_loss = 1.0 - dice_per_class.mean()
+
+        # Only average over classes that actually appear in this batch.
+        present   = targets_flat.sum(dim=1) > 0
+        dice_loss = 1.0 - (dice_per_class[present].mean() if present.any() else dice_per_class.mean())
 
         return dice_loss
 

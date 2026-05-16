@@ -152,7 +152,9 @@ def _stratified_split(
                 if line:
                     rows.append([int(v) for v in line.split()])
         arr = np.array(rows, dtype=np.int64)
-        counts = np.bincount(arr.flatten(), minlength=num_classes)[:num_classes]
+        valid = arr.flatten()
+        valid = valid[(valid >= 0) & (valid < num_classes)]
+        counts = np.bincount(valid, minlength=num_classes)[:num_classes]
         pixel_counts[stem] = counts
 
         classes = set(np.unique(arr).tolist())

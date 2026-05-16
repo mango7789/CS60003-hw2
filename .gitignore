@@ -44,3 +44,5 @@ report/*.synctex.gz
 report/*.fls
 report/*.fdb_latexmk
 report/*.pdf
+
+iccv09Data

@@ -27,8 +27,8 @@ class Config:
     # ── Loss function ─────────────────────────────────────────────────────────
     # Options: "ce"  |  "dice"  |  "combined"
     loss_type: Literal["ce", "dice", "combined"] = "combined"
-    dice_weight: float = 0.5   # weight of Dice term in combined loss (CE weight = 1 - dice_weight)
-    dice_smooth: float = 1.0   # smoothing constant in Dice Loss
+    dice_weight: float = 0.3   # weight of Dice term in combined loss (CE weight = 1 - dice_weight)
+    dice_smooth: float = 1e-6  # smoothing constant in Dice Loss
 
     # ── Model ─────────────────────────────────────────────────────────────────
     base_channels: int = 64   # channels in first encoder block; doubles each level

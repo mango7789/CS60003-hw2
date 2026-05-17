@@ -146,15 +146,15 @@ def get_loss_fn(cfg: Config, class_counts=None) -> nn.Module:
     Args:
         class_counts: optional array/tensor of per-class pixel counts from the
                       training split (returned by get_dataloaders). When provided,
-                      inverse-frequency weights are computed and passed to DiceLoss.
+                      median-frequency weights are computed and passed to DiceLoss.
     """
     weights = None
     if class_counts is not None:
         import numpy as np
         counts = np.asarray(class_counts, dtype=np.float64)
         counts = np.where(counts == 0, 1.0, counts)   # avoid div-by-zero for absent classes
-        inv_freq = 1.0 / counts
-        weights = torch.tensor(inv_freq / inv_freq.sum(), dtype=torch.float32)
+        median = np.median(counts)
+        weights = torch.tensor(median / counts, dtype=torch.float32)
 
     if cfg.loss_type == "ce":
         return CrossEntropyLoss()

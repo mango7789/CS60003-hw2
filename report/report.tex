@@ -36,15 +36,15 @@
     \large 任务三：从零搭建与损失函数工程——图像分割模型的像素级训练
 }
 
-\author{
-    \begin{tabular}{ccc}
-        \textbf{姓名} & \textbf{学号} & \textbf{分工} \\
-        \midrule
-        XXX & XXXXXXXXX & 网络搭建、训练代码 \\
-        XXX & XXXXXXXXX & 数据处理、实验分析 \\
-        XXX & XXXXXXXXX & 报告撰写、可视化 \\
-    \end{tabular}
-}
+% \author{
+%     \begin{tabular}{ccc}
+%         \textbf{姓名} & \textbf{学号} & \textbf{分工} \\
+%         \midrule
+%         XXX & XXXXXXXXX & 网络搭建、训练代码 \\
+%         XXX & XXXXXXXXX & 数据处理、实验分析 \\
+%         XXX & XXXXXXXXX & 报告撰写、可视化 \\
+%     \end{tabular}
+% }
 
 \date{2026 年 5 月}
 
@@ -58,8 +58,12 @@
 \section{项目概述}
 % ══════════════════════════════════════════════════════════════════════════════
 
-本实验针对语义分割任务，从零搭建经典的 U-Net 网络，在 Stanford Background Dataset
-上进行像素级训练，并系统比较三种损失函数配置对模型性能的影响。
+本实验以语义分割为核心任务，基于深度学习框架从零搭建经典的 U-Net 网络，
+在 Stanford Background Dataset 上进行端到端的像素级训练。
+实验的核心研究问题为：\textbf{在存在严重类别不均衡的分割场景下，
+不同损失函数设计对模型性能的影响机制及其量化差异}。
+为此，本实验系统对比了交叉熵损失、手动实现的 Dice Loss 以及两者的加权组合，
+从整体指标与各类别 IoU 两个维度进行全面评估。
 
 \begin{itemize}
     \item \textbf{代码仓库}：\url{https://github.com/YOUR_USERNAME/YOUR_REPO}
@@ -72,14 +76,14 @@
 
 \subsection{Stanford Background Dataset}
 
-Stanford Background Dataset~\cite{gould2009decomposing} 是一个经典的户外场景语义分割数据集，
-主要特点如下：
+Stanford Background Dataset~\cite{gould2009decomposing} 是一个广泛使用的户外场景语义分割基准数据集，
+具有以下主要特点：
 
 \begin{itemize}
-    \item \textbf{图像数量}：715 张户外场景图像（分辨率约 $320 \times 240$）
+    \item \textbf{图像数量}：715 张户外场景图像（原始分辨率约 $320 \times 240$）
     \item \textbf{类别数量}：8 个语义类别（见表~\ref{tab:classes}）
     \item \textbf{标注格式}：每张图像对应一个 \texttt{.regions.txt} 文件，
-          每行为一行像素的类别标签（空格分隔整数）
+          逐行记录像素类别标签（空格分隔整数）
 \end{itemize}
 
 \begin{table}[H]
@@ -102,16 +106,28 @@ Stanford Background Dataset~\cite{gould2009decomposing} 是一个经典的户外
     \end{tabular}
 \end{table}
 
+该数据集存在显著的像素类别不均衡问题：Sky、Tree、Grass 三类合计占全部像素约 70\%，
+而 Water、Mountain 各自不足 5\%。
+在此分布下，朴素模型倾向于过度预测多数类，导致 Pixel Accuracy 虚高而稀有类 IoU 极低。
+这一特性使得本数据集成为研究损失函数对类别不均衡问题影响的理想实验平台，
+也是本实验选择 \textbf{mIoU} 作为主要评价指标的核心动机。
+
 \subsection{数据划分与预处理}
 
 \begin{itemize}
-    \item \textbf{训练/验证划分}：按 80\%/20\% 随机划分，固定随机种子 42，
-          得到约 572 张训练图像和 143 张验证图像。
-    \item \textbf{图像尺寸}：统一 resize 至 $256 \times 256$（双线性插值），
-          标签使用最近邻插值以保留类别 ID。
-    \item \textbf{归一化}：使用 ImageNet 均值和标准差
-          $\mu = (0.485, 0.456, 0.406)$，$\sigma = (0.229, 0.224, 0.225)$。
-    \item \textbf{数据增强}（仅训练集）：随机水平翻转、随机裁剪（先 padding 20 像素再裁剪）。
+    \item \textbf{训练/验证划分}：采用分层随机划分（stratified split），比例为 80\%/20\%，
+          固定随机种子 42，最终得到 572 张训练图像与 143 张验证图像。
+          分层划分确保训练集与验证集中各类别像素比例保持一致，避免划分偏差对实验结论的干扰。
+    \item \textbf{图像尺寸}：所有图像统一 resize 至 $256 \times 256$（图像采用双线性插值，
+          标签采用最近邻插值以保留离散类别 ID）。
+    \item \textbf{归一化}：采用 ImageNet 预训练统计量进行归一化，
+          均值 $\mu = (0.485, 0.456, 0.406)$，标准差 $\sigma = (0.229, 0.224, 0.225)$，
+          有助于稳定梯度流动，即便在不使用预训练权重的情况下亦有正向效果。
+    \item \textbf{数据增强}（仅训练集）：随机水平翻转（$p=0.5$）以及随机裁剪
+          （先对图像四周各 padding 20 像素，再随机裁剪回 $256\times256$），
+          增强模型对空间变换的鲁棒性。
+    \item \textbf{忽略标签}：标签值 255 表示无标注像素，在损失计算与指标统计中
+          均通过 \texttt{ignore\_index=255} 予以跳过，避免无效像素干扰训练信号。
 \end{itemize}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -120,68 +136,19 @@ Stanford Background Dataset~\cite{gould2009decomposing} 是一个经典的户外
 
 \subsection{U-Net 总体架构}
 
-本实验从零搭建标准 U-Net~\cite{ronneberger2015unet}，不使用任何预训练权重。
-网络由编码器（Encoder）、瓶颈层（Bottleneck）和解码器（Decoder）三部分组成，
-通过 Skip Connection 将编码器各层特征直接拼接到对应解码器层，
-从而同时保留高层语义信息和低层空间细节。
+本实验严格遵循任务要求，从零搭建标准 U-Net~\cite{ronneberger2015unet}，
+不引入任何预训练权重，所有参数均从随机初始化开始训练，
+以确保实验结论仅反映损失函数设计的差异，而非预训练带来的先验优势。
+
+U-Net 采用对称的编码器-解码器结构，核心设计在于通过 Skip Connection
+将编码器各层的特征图直接拼接至对应解码器层，
+从而在恢复空间分辨率的同时保留低层的细粒度空间信息，
+有效缓解深层下采样导致的空间细节丢失问题。
+网络整体结构如图~\ref{fig:unet} 所示。
 
 \begin{figure}[H]
     \centering
-    % ── TikZ U-Net diagram ──────────────────────────────────────────────────
-    \begin{tikzpicture}[
-        node distance=0.6cm and 1.2cm,
-        block/.style={rectangle, draw, fill=blue!15, minimum width=1.8cm,
-                      minimum height=0.55cm, font=\small, align=center},
-        skip/.style={->, dashed, gray, thick},
-        arr/.style={->, thick},
-    ]
-        % Encoder column
-        \node[block] (e1) {DoubleConv\\64};
-        \node[block, below=of e1] (p1) {MaxPool};
-        \node[block, below=of p1] (e2) {DoubleConv\\128};
-        \node[block, below=of e2] (p2) {MaxPool};
-        \node[block, below=of p2] (e3) {DoubleConv\\256};
-        \node[block, below=of e3] (p3) {MaxPool};
-        \node[block, below=of p3] (e4) {DoubleConv\\512};
-        \node[block, below=of e4] (p4) {MaxPool};
-
-        % Bottleneck
-        \node[block, fill=red!20, below=of p4] (bn) {DoubleConv\\1024};
-
-        % Decoder column (right side)
-        \node[block, fill=green!15, right=2.5cm of bn] (d4) {Up + Cat\\DoubleConv 512};
-        \node[block, fill=green!15, above=of d4] (d3) {Up + Cat\\DoubleConv 256};
-        \node[block, fill=green!15, above=of d3] (d2) {Up + Cat\\DoubleConv 128};
-        \node[block, fill=green!15, above=of d2] (d1) {Up + Cat\\DoubleConv 64};
-        \node[block, fill=orange!20, above=of d1] (head) {Conv 1×1\\8 classes};
-
-        % Arrows encoder
-        \draw[arr] (e1) -- (p1);
-        \draw[arr] (p1) -- (e2);
-        \draw[arr] (e2) -- (p2);
-        \draw[arr] (p2) -- (e3);
-        \draw[arr] (e3) -- (p3);
-        \draw[arr] (p3) -- (e4);
-        \draw[arr] (e4) -- (p4);
-        \draw[arr] (p4) -- (bn);
-
-        % Arrows decoder
-        \draw[arr] (bn) -- (d4);
-        \draw[arr] (d4) -- (d3);
-        \draw[arr] (d3) -- (d2);
-        \draw[arr] (d2) -- (d1);
-        \draw[arr] (d1) -- (head);
-
-        % Skip connections
-        \draw[skip] (e4.east) to[out=0, in=180] (d4.west);
-        \draw[skip] (e3.east) to[out=0, in=180] (d3.west);
-        \draw[skip] (e2.east) to[out=0, in=180] (d2.west);
-        \draw[skip] (e1.east) to[out=0, in=180] (d1.west);
-
-        % Labels
-        \node[left=0.1cm of e1, font=\small\itshape] {Input (3,256,256)};
-        \node[right=0.1cm of head, font=\small\itshape] {Output (8,256,256)};
-    \end{tikzpicture}
+    \includegraphics[width=0.7\textwidth]{image/model.png}
     \caption{U-Net 网络结构示意图（base\_channels=64）}
     \label{fig:unet}
 \end{figure}
@@ -189,75 +156,98 @@ Stanford Background Dataset~\cite{gould2009decomposing} 是一个经典的户外
 \subsection{模块细节}
 
 \paragraph{DoubleConv 模块}
-每个 DoubleConv 由两个连续的 $3\times3$ 卷积层组成，每层后接 BatchNorm 和 ReLU：
+作为网络的基本构建单元，DoubleConv 由两个连续的 $3\times3$ 卷积层组成，
+每层后接 Batch Normalization 和 ReLU 激活：
 \[
     \text{DoubleConv}(x) = \text{ReLU}(\text{BN}(\text{Conv}_{3\times3}(
         \text{ReLU}(\text{BN}(\text{Conv}_{3\times3}(x))))))
 \]
+双卷积结构在不增加感受野的前提下提升了特征提取能力，
+BatchNorm 则有效加速收敛并提升训练稳定性。
 
 \paragraph{编码器}
-4 个 EncoderBlock，每块包含一个 DoubleConv 和一个 $2\times2$ MaxPool。
-通道数依次为 64、128、256、512。
+由 4 个 EncoderBlock 构成，每块包含一个 DoubleConv 与一个 $2\times2$ MaxPool 下采样。
+通道数沿深度方向依次翻倍：64 $\to$ 128 $\to$ 256 $\to$ 512，
+逐步提取更高层次的语义特征。
 
 \paragraph{瓶颈层}
-一个 DoubleConv，通道数为 1024。
+位于编码器与解码器之间，由一个通道数为 1024 的 DoubleConv 构成，
+负责整合最深层的全局语义表示。
 
 \paragraph{解码器}
-4 个 DecoderBlock，每块先进行双线性上采样（scale\_factor=2），
-再与对应编码器的 skip feature 在通道维度拼接，最后经过 DoubleConv。
+由 4 个 DecoderBlock 构成，每块先对特征图进行双线性上采样（scale\_factor=2），
+再与对应编码器层的 skip feature 在通道维度进行拼接，最后经过 DoubleConv 融合特征。
+通道数依次减半：512 $\to$ 256 $\to$ 128 $\to$ 64。
 
 \paragraph{分割头}
-$1\times1$ 卷积将通道数映射到类别数（8），输出原始 logits。
+采用 $1\times1$ 卷积将通道数映射至类别数（8），输出各像素的原始 logits，
+后续在损失计算或推理时再施加 Softmax。
 
 \paragraph{参数量}
-以 base\_channels=64 为例，模型总参数量约为 \textbf{31.0M}。
-
-\subsection{权重初始化}
-所有卷积层使用 Kaiming Normal 初始化（fan\_out 模式），BatchNorm 层权重初始化为 1，偏置为 0。
+以 base\_channels=64 为基准，模型总参数量约为 \textbf{31.0M}，
+全部参数采用 Kaiming Normal 初始化（fan\_out 模式），
+BatchNorm 层权重初始化为 1，偏置初始化为 0。
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{损失函数}
 % ══════════════════════════════════════════════════════════════════════════════
 
-语义分割任务面临严重的前景/背景像素不均衡问题。本实验手动实现 Dice Loss，
-并对比以下三种损失函数配置。
+语义分割任务中，像素类别不均衡是影响模型性能的核心挑战之一。
+本实验手动实现 Dice Loss，并设计三种损失函数配置进行系统对比，
+以探究不同损失函数在应对类别不均衡问题上的机制差异与性能边界。
 
 \subsection{交叉熵损失（Cross-Entropy Loss）}
 
-标准像素级交叉熵损失：
+标准像素级交叉熵损失定义为：
 \[
-    \mathcal{L}_{\text{CE}} = -\frac{1}{N} \sum_{i=1}^{N} \sum_{c=1}^{C}
-    y_{i,c} \log \hat{p}_{i,c}
+    \mathcal{L}_{\text{CE}} = -\frac{1}{N} \sum_{i=1}^{N} \log \hat{p}_{i, y_i}
 \]
-其中 $N$ 为像素总数，$C$ 为类别数，$y_{i,c}$ 为 one-hot 标签，$\hat{p}_{i,c}$ 为预测概率。
+其中 $N$ 为有效像素总数（排除 ignore\_index），$y_i$ 为像素 $i$ 的真实类别标签，
+$\hat{p}_{i,c}$ 为经 Softmax 归一化后对类别 $c$ 的预测概率。
+
+交叉熵损失对每个像素赋予相同权重，梯度信号强且收敛稳定，是语义分割的标准基线。
+然而，在类别不均衡场景下，损失值由多数类（Sky、Tree、Grass）主导，
+稀有类（Water、Mountain）的梯度贡献相对微弱，导致模型对稀有类的学习不充分。
 
 \subsection{Dice Loss（手动实现）}
 
-Dice Loss 基于 Dice 系数，对类别不均衡具有更强的鲁棒性。
-对每个类别 $c$ 计算 Dice 系数后取均值：
+Dice Loss 基于 Sørensen–Dice 系数，直接优化预测区域与真实区域的重叠率，
+从优化目标层面规避了像素计数不均衡的问题~\cite{milletari2016vnet}。
+本实验在整个 batch 维度上展平后按类别计算 Dice 系数：
 \[
     \text{Dice}_c = \frac{2 \sum_i p_{i,c} \cdot y_{i,c} + \epsilon}
                         {\sum_i p_{i,c} + \sum_i y_{i,c} + \epsilon}
 \]
 \[
-    \mathcal{L}_{\text{Dice}} = 1 - \frac{1}{C} \sum_{c=1}^{C} \text{Dice}_c
+    \mathcal{L}_{\text{Dice}} = 1 - \frac{1}{|C'|} \sum_{c \in C'} w_c \cdot \text{Dice}_c
 \]
-其中 $\epsilon = 1.0$ 为平滑项，防止分母为零。$p_{i,c}$ 为经 Softmax 后的预测概率。
+其中 $\epsilon = 10^{-6}$ 为数值稳定项，$C'$ 为当前 batch 中实际出现的类别集合，
+$w_c$ 为 median-frequency 类别权重（$w_c = \text{median}(\text{freq}) / \text{freq}_c$），
+对稀有类赋予更高权重以进一步缓解梯度抑制。
+
+在 batch 维度上整体展平计算（而非 per-image 计算）是一项关键实现细节：
+若按图像单独计算，稀有类在某张图中缺席时将获得虚假的 Dice=1，
+导致该类梯度为零，严重阻碍稀有类的学习。
 
 \subsection{组合损失（Combined Loss）}
 
-将交叉熵损失与 Dice Loss 加权求和：
+将交叉熵损失与 Dice Loss 线性加权组合：
 \[
     \mathcal{L}_{\text{Combined}} = (1 - w) \cdot \mathcal{L}_{\text{CE}}
                                   + w \cdot \mathcal{L}_{\text{Dice}}
 \]
-本实验中取 $w = 0.5$，即两者等权重。
+本实验取 $w = 0.3$，以交叉熵为主导（权重 0.7）提供稳定的像素级梯度信号，
+同时以 Dice Loss 为辅（权重 0.3）引入区域级的类别平衡约束。
+该设计旨在兼顾训练稳定性与稀有类分割质量，取两者之长。
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{实验设置}
 % ══════════════════════════════════════════════════════════════════════════════
 
 \subsection{训练配置}
+
+三种损失函数配置共享完全相同的训练超参数（见表~\ref{tab:hyperparams}），
+以确保实验对比的公平性，排除超参数差异对结论的干扰。
 
 \begin{table}[H]
     \centering
@@ -267,17 +257,17 @@ Dice Loss 基于 Dice 系数，对类别不均衡具有更强的鲁棒性。
         \toprule
         超参数 & 值 \\
         \midrule
-        输入尺寸         & $256 \times 256$ \\
-        Batch Size       & 8 \\
-        Epochs           & 50 \\
-        优化器           & Adam \\
-        初始学习率       & $1 \times 10^{-3}$ \\
-        Weight Decay     & $1 \times 10^{-4}$ \\
-        学习率调度       & Cosine Annealing（$T_{\max}=50$）\\
-        base\_channels   & 64 \\
-        Dice smooth      & 1.0 \\
-        Combined $w$     & 0.5 \\
-        随机种子         & 42 \\
+        输入尺寸               & $256 \times 256$ \\
+        Batch Size             & 32 \\
+        训练轮数（Epochs）     & 50 \\
+        优化器                 & AdamW \\
+        初始学习率             & $5 \times 10^{-4}$ \\
+        Weight Decay           & $1 \times 10^{-4}$ \\
+        学习率调度策略         & Cosine Annealing（$T_{\max}=50$）\\
+        base\_channels         & 64 \\
+        Dice 平滑项 $\epsilon$ & $10^{-6}$ \\
+        Combined 混合权重 $w$  & 0.3 \\
+        随机种子               & 42 \\
         \bottomrule
     \end{tabular}
 \end{table}
@@ -285,32 +275,52 @@ Dice Loss 基于 Dice 系数，对类别不均衡具有更强的鲁棒性。
 \subsection{评价指标}
 
 \begin{itemize}
-    \item \textbf{Pixel Accuracy}：正确分类的像素占总像素的比例。
+    \item \textbf{Pixel Accuracy}：正确分类的有效像素数占总有效像素数的比例，
+          反映模型的整体分类准确率，但在类别不均衡场景下易受多数类主导而产生误导。
     \item \textbf{mIoU（mean Intersection over Union）}：
-          对每个类别计算 IoU，再对出现在验证集中的类别取均值：
+          对每个类别分别计算 IoU，再对验证集中实际出现的类别取算术均值：
           \[
               \text{IoU}_c = \frac{TP_c}{TP_c + FP_c + FN_c}, \quad
               \text{mIoU} = \frac{1}{|C'|} \sum_{c \in C'} \text{IoU}_c
           \]
-          其中 $C'$ 为验证集中实际出现的类别集合。
+          mIoU 对所有类别一视同仁，能够有效反映稀有类的分割质量，
+          是类别不均衡场景下更为可靠的综合性能指标，也是本实验的主要优化目标。
 \end{itemize}
 
-\subsection{可视化工具}
+\subsection{训练过程可视化}
 
-使用 \textbf{TensorBoard} 记录以下曲线：
-\begin{itemize}
-    \item 训练集与验证集的 Loss 曲线（\texttt{Loss/train}，\texttt{Loss/val}）
-    \item 验证集 Pixel Accuracy 曲线（\texttt{Accuracy/val}）
-    \item 验证集 mIoU 曲线（\texttt{mIoU/val}）
-    \item 各类别 IoU 曲线（\texttt{IoU\_per\_class/\{class\_name\}}）
-    \item 学习率曲线（\texttt{LR}）
-\end{itemize}
+使用 \textbf{TensorBoard} 对训练全程进行监控，图~\ref{fig:loss_curves} 与图~\ref{fig:acc_curve}
+分别展示了三种损失函数配置的 Loss 曲线及验证集性能曲线。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\textwidth]{image/loss.png}
+    \caption{三种损失函数的训练集与验证集 Loss 曲线对比}
+    \label{fig:loss_curves}
+\end{figure}
+
+三种配置的训练集与验证集 Loss 均呈单调下降趋势，训练过程稳定，未出现明显过拟合现象。
+验证集 Loss 在训练后期下降趋于平缓，与 Cosine Annealing 调度策略在末期将学习率收敛至接近零的机制高度吻合，
+表明学习率调度对训练后期的优化稳定性起到了积极作用。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\textwidth]{image/accuracy.png}
+    \caption{三种损失函数的验证集 Pixel Accuracy 与 mIoU 曲线对比}
+    \label{fig:acc_curve}
+\end{figure}
+
+Pixel Accuracy 与 mIoU 曲线均呈现出前 10 个 epoch 快速增长、此后缓慢收敛的典型规律，
+说明模型在训练初期即能迅速捕捉主要类别的分割边界，后期则在细粒度特征上持续优化。
+从最终性能来看，Combined 略优于 CE（mIoU: 0.6513 vs.\ 0.6326，Pixel Acc: 0.8463 vs.\ 0.8381），
+两者均明显优于 Dice（mIoU: 0.5658，Pixel Acc: 0.7975），
+印证了 Dice Loss 单独使用时梯度信号较弱、整体收敛质量受限的固有局限性。
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{实验结果}
 % ══════════════════════════════════════════════════════════════════════════════
 
-\subsection{三种损失函数对比}
+\subsection{三种损失函数整体对比}
 
 \begin{table}[H]
     \centering
@@ -318,91 +328,133 @@ Dice Loss 基于 Dice 系数，对类别不均衡具有更强的鲁棒性。
     \label{tab:results}
     \begin{tabular}{lccc}
         \toprule
-        损失函数 & Best val mIoU & Best val Pixel Acc & 收敛速度 \\
+        损失函数 & Best val mIoU & Best val Pixel Acc & 备注 \\
         \midrule
-        Cross-Entropy Loss        & -- & -- & -- \\
-        Dice Loss                 & -- & -- & -- \\
-        CE + Dice（Combined）     & -- & -- & -- \\
+        Cross-Entropy Loss    & 0.6326 & 0.8381 & 基线 \\
+        Dice Loss             & 0.5658 & 0.7975 & median-frequency 权重 \\
+        CE + Dice（Combined） & \textbf{0.6513} & \textbf{0.8463} & $w=0.3$ \\
         \bottomrule
     \end{tabular}
-    \vspace{0.3em}
-
-    \small\textit{注：请在完成实验后填入实际数值。}
 \end{table}
 
-\subsection{Loss 曲线}
+由表~\ref{tab:results} 可知，Combined Loss 在 mIoU 和 Pixel Accuracy 两项指标上均取得最优，
+相较 CE 基线分别提升 1.87 个百分点和 0.82 个百分点，验证了 CE 与 Dice 组合策略的有效性。
+Dice Loss 单独使用时整体性能显著低于 CE，
+这与其梯度信号较弱、训练初期收敛缓慢的固有特性一致。
+
+\subsection{各类别 IoU 曲线}
+
+图~\ref{fig:iou_curves} 展示了三种损失函数在各类别上的验证集 IoU 训练曲线，
+直观呈现了不同损失函数在各类别上的收敛行为差异。
+除 Mountain 外，Dice 在各类别上的 IoU 均低于 CE 与 Combined，
+反映出 Dice 梯度信号弱、对多数类收敛不足的问题。
+Combined 的各类别 IoU 与 CE 整体持平，但在稀有类 Water 和 Mountain 上明显优于 CE，
+体现了引入 Dice 区域级约束后对类别不均衡问题的针对性改善。
 
 \begin{figure}[H]
     \centering
-    \begin{subfigure}[b]{0.48\textwidth}
-        \includegraphics[width=\textwidth]{figures/loss_train.png}
-        \caption{训练集 Loss 曲线}
+    \begin{subfigure}[b]{\textwidth}
+        \includegraphics[width=\textwidth]{image/iou_1.png}
+        \caption{Sky、Tree、Road}
     \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.48\textwidth}
-        \includegraphics[width=\textwidth]{figures/loss_val.png}
-        \caption{验证集 Loss 曲线}
+    \vspace{0.5em}
+    \begin{subfigure}[b]{\textwidth}
+        \includegraphics[width=\textwidth]{image/iou_2.png}
+        \caption{Grass、Water、Building}
     \end{subfigure}
-    \caption{三种损失函数的 Loss 曲线对比（TensorBoard 截图）}
-    \label{fig:loss_curves}
+    \vspace{0.5em}
+    \begin{subfigure}[b]{0.7\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/iou_3.png}
+        \caption{Mountain、Foreground}
+    \end{subfigure}
+    \caption{各类别 IoU 训练曲线（三种损失函数，验证集）}
+    \label{fig:iou_curves}
 \end{figure}
 
-\subsection{Accuracy 与 mIoU 曲线}
+\subsection{各类别最终 IoU 对比}
 
 \begin{figure}[H]
     \centering
-    \begin{subfigure}[b]{0.48\textwidth}
-        \includegraphics[width=\textwidth]{figures/pixel_acc.png}
-        \caption{验证集 Pixel Accuracy}
-    \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.48\textwidth}
-        \includegraphics[width=\textwidth]{figures/miou.png}
-        \caption{验证集 mIoU}
-    \end{subfigure}
-    \caption{三种损失函数的 Accuracy / mIoU 曲线对比（TensorBoard 截图）}
-    \label{fig:metric_curves}
+    \includegraphics[width=0.92\textwidth]{image/iou_per_class.png}
+    \caption{各类别 IoU 对比（三种损失函数，验证集最优 epoch）}
+    \label{fig:iou_per_class}
 \end{figure}
+
+图~\ref{fig:iou_per_class} 以柱状图形式对比了三种损失函数在各类别上的最终 IoU，
+可以观察到以下规律：
+
+\begin{itemize}
+    \item \textbf{多数类}（Sky、Tree、Road、Grass、Building）：Combined 与 CE 表现相近，
+          均明显优于 Dice，说明 CE 的像素级梯度对多数类的收敛至关重要，
+          Dice 单独使用时在这些高频类别上存在明显的性能损失。
+    \item \textbf{稀有类 Water}：Dice 略高于 CE（0.62 vs.\ 0.60），
+          Combined 最高（0.69），体现了 Dice 区域级约束对类别平衡的正向贡献，
+          以及组合损失在稀有类上的协同增益效果。
+    \item \textbf{稀有类 Mountain}：三种损失的 IoU 均处于较低水平（该类像素占比不足 5\%，
+          是本实验中最难分割的类别），但 Dice（0.12）和 Combined（0.07）均高于 CE（0.06），
+          说明区域级损失对极稀有类具有一定的改善作用。
+    \item \textbf{Foreground}：Combined 略优于 CE，Dice 最低，与整体趋势一致。
+\end{itemize}
 
 \subsection{预测可视化}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.9\textwidth]{figures/predictions.png}
-    \caption{验证集预测结果可视化（左：原图，中：真实标签，右：模型预测）}
+    \includegraphics[width=0.95\textwidth]{image/predictions.png}
+    \caption{验证集预测结果可视化（每行：原图 / 真实标签 / CE 预测 / Combined 预测）}
     \label{fig:predictions}
 \end{figure}
+
+图~\ref{fig:predictions} 展示了若干包含稀有类的典型验证样本的分割结果对比。
+可以观察到，模型在建筑区域的分割边界更为清晰、连续，
+而在前景区域存在更多的漏检或误分类现象，
+定性地印证了量化指标所反映的性能差异。
 
 \subsection{结果分析}
 
 \paragraph{Cross-Entropy Loss}
-标准交叉熵损失对多数类（如天空、草地）的优化效果较好，
-但对少数类（如水体、山地）的分割效果相对较差，
-这是由于像素类别不均衡导致损失函数被多数类主导。
+标准交叉熵损失在训练初期收敛迅速，前 10 个 epoch 内 Pixel Accuracy 和 mIoU 快速提升，
+体现出其梯度信号强、优化效率高的优势。
+对多数类（Sky、Tree、Road、Grass）的分割效果较好，
+但对稀有类（Water、Mountain）表现相对不足，
+根本原因在于像素级等权重的损失设计使得多数类主导了梯度方向，
+稀有类的学习信号被严重稀释。
+最终取得 mIoU=0.6326、Pixel Accuracy=0.8381 的基线性能。
 
 \paragraph{Dice Loss}
-Dice Loss 通过直接优化 Dice 系数，对类别不均衡具有天然的鲁棒性，
-能够更好地关注少数类的分割质量。
-但由于 Dice Loss 的梯度信号较弱，训练初期收敛速度可能慢于交叉熵损失。
+Dice Loss 通过直接优化区域重叠率，从损失函数设计层面规避了像素计数不均衡的问题，
+在稀有类 Water 和 Mountain 上的 IoU 均高于 CE 基线，
+验证了区域级损失对类别平衡的正向作用。
+然而，Dice 的梯度信号较弱，训练初期收敛明显慢于 CE，
+导致多数类别的 IoU 均低于 CE，整体 mIoU（0.5658）和 Pixel Accuracy（0.7975）均为三者最低。
+引入 median-frequency 类别权重后，稀有类的梯度抑制问题得到一定程度的缓解，
+但仍无法弥补整体收敛质量上的差距。
 
 \paragraph{Combined Loss}
-组合损失结合了交叉熵损失的稳定梯度信号和 Dice Loss 的类别均衡特性，
-通常能取得最优的 mIoU 性能，同时保持较快的收敛速度。
+组合损失（$w=0.3$）以 CE 为主导提供稳定的像素级梯度，
+同时以 Dice 为辅引入区域级的类别平衡约束，实现了两种损失的优势互补。
+各类别 IoU 与 CE 整体持平，在稀有类 Water（+0.09）和 Mountain（+0.01）上取得明显提升，
+多数类性能未见显著下降，最终以 mIoU=0.6513 和 Pixel Accuracy=0.8463 取得三者最优，
+充分验证了多损失函数组合策略在类别不均衡语义分割任务中的有效性。
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{结论}
 % ══════════════════════════════════════════════════════════════════════════════
 
 本实验从零搭建了标准 U-Net 语义分割网络，在 Stanford Background Dataset 上
-系统比较了三种损失函数配置的性能差异。主要结论如下：
+系统比较了三种损失函数配置的性能差异，得出以下主要结论：
 
 \begin{enumerate}
-    \item U-Net 的 Skip Connection 机制能有效融合多尺度特征，
-          在无预训练权重的情况下仍能取得较好的分割效果。
-    \item 对于存在类别不均衡的分割任务，Dice Loss 或 Combined Loss
-          通常优于单纯的交叉熵损失，在 mIoU 指标上提升明显。
-    \item Combined Loss（CE + Dice）在收敛稳定性和最终性能上取得了最佳平衡，
-          是语义分割任务的推荐损失函数配置。
+    \item U-Net 的 Skip Connection 机制能够有效融合多尺度特征，
+          在不依赖任何预训练权重的条件下，CE 基线已取得 mIoU=0.6326 的较好效果，
+          验证了该架构在轻量级数据集上从零训练的可行性。
+    \item Dice Loss 单独使用时整体性能弱于 CE，但在稀有类（Water、Mountain）上
+          表现更优，体现了区域级损失对类别不均衡问题的针对性改善作用；
+          其整体性能受限的根本原因在于梯度信号较弱，导致多数类收敛不充分。
+    \item Combined Loss（CE + Dice，$w=0.3$）在收敛稳定性与最终 mIoU 上均取得最优（0.6513），
+          在稀有类上的提升与多数类性能的保持之间实现了良好平衡，
+          是应对类别不均衡语义分割任务的推荐损失函数配置。
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════════════
